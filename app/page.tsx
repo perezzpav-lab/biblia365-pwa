@@ -53,6 +53,14 @@ import {
   removeProfileQueueItem,
   type ProfileStatsPayload,
 } from "@/lib/profile-sync-queue";
+import {
+  createDefaultFamilyProfiles,
+  FAMILY_NAME_KEY,
+  FAMILY_PROFILES_KEY,
+  FAMILY_SELECTED_PROFILE_KEY,
+  type FamilyProfile,
+} from "@/lib/family-types";
+import { fetchFamilyForUser, upsertFamilyForUser } from "@/lib/family-supabase";
 
 type PlanBiblico = {
   id_dia: number;
@@ -88,13 +96,6 @@ type SupabaseDebugInfo = {
   source: string;
 };
 
-type FamilyProfile = {
-  id: string;
-  name: string;
-  emoji: string;
-  role: "admin" | "member" | "child";
-};
-
 type ThemePreference = "auto" | "light" | "dark";
 
 type Sticker = {
@@ -112,8 +113,6 @@ const LOCAL_LAST_ACTIVITY_AT_KEY = "biblia365_local_last_activity_at";
 const BADGES_KEY = "biblia365_badges_v1";
 const XP_KEY = "biblia365_xp_v1";
 const STICKERS_KEY = "biblia365_stickers_v1";
-const FAMILY_PROFILES_KEY = "biblia365_family_profiles";
-const FAMILY_SELECTED_PROFILE_KEY = "biblia365_selected_profile";
 const THEME_PREF_KEY = "biblia365_theme_pref";
 const PROFILE_UPDATED_AT_KEY = "biblia365_profile_updated_at";
 const GAME_WIN_DAYS_KEY = "biblia365_game_win_days";
@@ -313,12 +312,6 @@ function toDebugInfo(error: unknown, source: string): SupabaseDebugInfo {
   };
 }
 
-const DEFAULT_FAMILY_PROFILES: FamilyProfile[] = [
-  { id: "aaron", name: "Aarón", emoji: "🧔🏻", role: "admin" },
-  { id: "rebeca", name: "Rebeca", emoji: "👩🏻", role: "member" },
-  { id: "eliana", name: "Eliana", emoji: "🧒🏻", role: "child" },
-];
-
 function profileScopedKey(base: string, profileId: string | null): string {
   return `${base}:${profileId ?? "global"}`;
 }
@@ -351,7 +344,7 @@ export default function Home() {
   const [userXp, setUserXp] = useState(0);
   const [avatarKey, setAvatarKey] = useState<string>("lion_shield");
   const [showSplash, setShowSplash] = useState(true);
-  const [familyProfiles, setFamilyProfiles] = useState<FamilyProfile[]>(DEFAULT_FAMILY_PROFILES);
+  const [familyProfiles, setFamilyProfiles] = useState<FamilyProfile[]>(() => createDefaultFamilyProfiles());
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [showProfilePicker, setShowProfilePicker] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
@@ -362,7 +355,8 @@ export default function Home() {
 
   const theme = THEMES[modo];
   const selectedProfile = familyProfiles.find((profile) => profile.id === selectedProfileId) ?? null;
-  const nombreUsuario = selectedProfile?.name ?? userEmail?.split("@")[0] ?? "Aarón";
+  const nombreUsuario =
+    selectedProfile?.name ?? userEmail?.split("@")[0] ?? (language === "en" ? "Reader" : "Lector");
   const avatar = getAvatarByKey(avatarKey);
   const levelInfo = getLevelFromXp(userXp);
   const isNightTime = useMemo(() => {
@@ -508,7 +502,9 @@ export default function Home() {
         localStorage.removeItem(FAMILY_PROFILES_KEY);
       }
     } else {
-      localStorage.setItem(FAMILY_PROFILES_KEY, JSON.stringify(DEFAULT_FAMILY_PROFILES));
+      const defaults = createDefaultFamilyProfiles();
+      setFamilyProfiles(defaults);
+      localStorage.setItem(FAMILY_PROFILES_KEY, JSON.stringify(defaults));
     }
 
     const selected = localStorage.getItem(FAMILY_SELECTED_PROFILE_KEY);
@@ -545,9 +541,22 @@ export default function Home() {
     const gameWinsKey = profileScopedKey(GAME_WIN_DAYS_KEY, selectedProfileId);
 
     const modeStored = localStorage.getItem(modeKey);
+    let selectedRole: FamilyProfile["role"] | null = null;
+    try {
+      const rawProfiles = localStorage.getItem(FAMILY_PROFILES_KEY);
+      if (rawProfiles) {
+        const parsed = JSON.parse(rawProfiles) as FamilyProfile[];
+        if (Array.isArray(parsed)) {
+          selectedRole = parsed.find((p) => p.id === selectedProfileId)?.role ?? null;
+        }
+      }
+    } catch {
+      selectedRole = null;
+    }
+
     if (modeStored === "adulto" || modeStored === "joven" || modeStored === "nino") {
       setModo(modeStored);
-    } else if (selectedProfileId === "eliana") {
+    } else if (selectedRole === "child") {
       setModo("nino");
     }
 
@@ -712,6 +721,56 @@ export default function Home() {
 
     return () => subscription.unsubscribe();
   }, [onboardingVerificado]);
+
+  useEffect(() => {
+    if (!onboardingVerificado || !userId) return;
+    let cancelled = false;
+
+    const syncFamily = async () => {
+      const cloud = await fetchFamilyForUser(supabase, userId);
+      if (cancelled) return;
+      if (cloud && cloud.members.length > 0) {
+        setFamilyProfiles(cloud.members);
+        localStorage.setItem(FAMILY_PROFILES_KEY, JSON.stringify(cloud.members));
+        localStorage.setItem(FAMILY_NAME_KEY, cloud.familyName);
+        const sel = localStorage.getItem(FAMILY_SELECTED_PROFILE_KEY);
+        if (!sel || !cloud.members.some((m) => m.id === sel)) {
+          const first = cloud.members[0];
+          if (first) {
+            setSelectedProfileId(first.id);
+            localStorage.setItem(FAMILY_SELECTED_PROFILE_KEY, first.id);
+            setShowProfilePicker(false);
+          }
+        }
+        return;
+      }
+
+      const raw = localStorage.getItem(FAMILY_PROFILES_KEY);
+      const famName = localStorage.getItem(FAMILY_NAME_KEY) ?? "Mi familia";
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as FamilyProfile[];
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+        const res = await upsertFamilyForUser(supabase, userId, famName, parsed);
+        if (!cancelled && res.ok) {
+          void fetchFamilyForUser(supabase, userId).then((again) => {
+            if (!cancelled && again?.members.length) {
+              setFamilyProfiles(again.members);
+              localStorage.setItem(FAMILY_PROFILES_KEY, JSON.stringify(again.members));
+              localStorage.setItem(FAMILY_NAME_KEY, again.familyName);
+            }
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void syncFamily();
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingVerificado, userId]);
 
   useEffect(() => {
     if (!onboardingVerificado) return;
@@ -1568,7 +1627,11 @@ export default function Home() {
           viewport={{ once: true, amount: 0.35 }}
           transition={{ duration: 0.32, delay: 0.12 }}
         >
-          <MiniGamesHub mode={modo} onFinish={guardarXpJuego} />
+          <MiniGamesHub
+            mode={modo}
+            kidDisplayName={modo === "nino" ? nombreUsuario : undefined}
+            onFinish={guardarXpJuego}
+          />
         </motion.section>
 
         <motion.section
