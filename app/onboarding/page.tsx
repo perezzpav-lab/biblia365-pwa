@@ -1,9 +1,11 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { BookOpenText, Gift, HeartHandshake, Sparkles } from "lucide-react";
+import { BookOpenText, Gift, HeartHandshake, Sparkles, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import FamilySetup from "@/components/FamilySetup";
+import { supabase } from "@/lib/supabase";
 
 type ModoInicial = "adulto" | "joven" | "nino";
 
@@ -32,9 +34,16 @@ const PASOS = [
   },
   {
     id: 3,
-    titulo: "Para toda la familia",
+    titulo: "Tu hogar, tus nombres",
     descripcion:
-      "Elige tu modo inicial y disfruta un plan adaptado para adultos, jóvenes y niños.",
+      "Configura tu familia una sola vez: cada integrante tendrá su propio progreso y modo de lectura.",
+    icono: Users,
+  },
+  {
+    id: 4,
+    titulo: "Modo inicial",
+    descripcion:
+      "Elige cómo quieres empezar hoy; siempre podrás cambiarlo desde la pantalla principal o al cambiar de perfil.",
     icono: HeartHandshake,
   },
 ] as const;
@@ -44,6 +53,7 @@ export default function OnboardingPage() {
   const [pasoActual, setPasoActual] = useState(0);
   const [modoInicial, setModoInicial] = useState<ModoInicial>("adulto");
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     const onBeforeInstallPrompt = (event: Event) => {
@@ -53,6 +63,18 @@ export default function OnboardingPage() {
 
     window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
     return () => window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+  }, []);
+
+  useEffect(() => {
+    void supabase.auth.getSession().then(({ data }) => {
+      setUserId(data.session?.user.id ?? null);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user.id ?? null);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   const avanzar = () => {
@@ -77,54 +99,60 @@ export default function OnboardingPage() {
   };
 
   const PasoIcono = PASOS[pasoActual].icono;
+  const esPasoFamilia = pasoActual === 2;
+  const esUltimoPaso = pasoActual === PASOS.length - 1;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-stone-50 to-stone-100 px-4 py-8">
-      <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md flex-col rounded-3xl bg-white p-6 shadow-2xl">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-emerald-950/40 to-slate-950 px-4 py-8">
+      <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md flex-col rounded-3xl border border-white/10 bg-white/95 p-6 shadow-[0_30px_80px_-24px_rgba(6,78,59,0.45)] backdrop-blur-sm">
         <div className="mb-6 flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-emerald-700" />
-          <p className="text-sm font-semibold tracking-wide text-emerald-700">Bienvenido a Biblia 365</p>
+          <p className="text-sm font-semibold tracking-wide text-emerald-800">Bienvenido a Biblia 365</p>
         </div>
 
         <div className="flex-1">
-          <AnimatePresence mode="wait">
-            <motion.section
-              key={PASOS[pasoActual].id}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.25 }}
-              className="rounded-3xl bg-zinc-50 p-5 text-center"
-            >
-              <PasoIcono className="mx-auto mb-4 h-12 w-12 text-emerald-700" />
-              <h1 className="font-serif text-2xl font-semibold text-zinc-900">{PASOS[pasoActual].titulo}</h1>
-              <p className="mt-3 text-sm leading-7 text-zinc-600">{PASOS[pasoActual].descripcion}</p>
+          {esPasoFamilia ? (
+            <FamilySetup userId={userId} onBack={retroceder} onContinue={avanzar} />
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.section
+                key={PASOS[pasoActual].id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.25 }}
+                className="rounded-3xl bg-zinc-50 p-5 text-center"
+              >
+                <PasoIcono className="mx-auto mb-4 h-12 w-12 text-emerald-700" />
+                <h1 className="font-serif text-2xl font-semibold text-zinc-900">{PASOS[pasoActual].titulo}</h1>
+                <p className="mt-3 text-sm leading-7 text-zinc-600">{PASOS[pasoActual].descripcion}</p>
 
-              {pasoActual === 2 && (
-                <div className="mt-5 rounded-2xl bg-white p-2">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Modo inicial
-                  </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["adulto", "joven", "nino"] as const).map((modo) => (
-                      <button
-                        key={modo}
-                        type="button"
-                        onClick={() => setModoInicial(modo)}
-                        className={`min-h-10 rounded-xl text-sm font-medium transition ${
-                          modoInicial === modo
-                            ? "bg-emerald-700 text-white"
-                            : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                        }`}
-                      >
-                        {modo === "adulto" ? "Adulto" : modo === "joven" ? "Joven" : "Niños"}
-                      </button>
-                    ))}
+                {esUltimoPaso && (
+                  <div className="mt-5 rounded-2xl bg-white p-2">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                      Modo inicial
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(["adulto", "joven", "nino"] as const).map((modo) => (
+                        <button
+                          key={modo}
+                          type="button"
+                          onClick={() => setModoInicial(modo)}
+                          className={`min-h-10 rounded-xl text-sm font-medium transition ${
+                            modoInicial === modo
+                              ? "bg-emerald-700 text-white shadow-md shadow-emerald-900/20"
+                              : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                          }`}
+                        >
+                          {modo === "adulto" ? "Adulto" : modo === "joven" ? "Joven" : "Niños"}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
-            </motion.section>
-          </AnimatePresence>
+                )}
+              </motion.section>
+            </AnimatePresence>
+          )}
 
           <div className="mt-4 flex items-center justify-center gap-2">
             {PASOS.map((paso, index) => (
@@ -138,34 +166,38 @@ export default function OnboardingPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={retroceder}
-            disabled={pasoActual === 0}
-            className="min-h-11 rounded-2xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Atrás
-          </button>
-          <button
-            type="button"
-            onClick={avanzar}
-            disabled={pasoActual === PASOS.length - 1}
-            className="min-h-11 rounded-2xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Siguiente
-          </button>
-        </div>
+        {!esPasoFamilia && (
+          <div className="mt-6 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={retroceder}
+              disabled={pasoActual === 0}
+              className="min-h-11 rounded-2xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Atrás
+            </button>
+            <button
+              type="button"
+              onClick={avanzar}
+              disabled={esUltimoPaso}
+              className="min-h-11 rounded-2xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Siguiente
+            </button>
+          </div>
+        )}
 
-        <motion.button
-          type="button"
-          onClick={comenzar}
-          animate={{ scale: [1, 1.02, 1] }}
-          transition={{ duration: 1.8, repeat: Infinity }}
-          className="mt-4 min-h-12 w-full rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-emerald-800"
-        >
-          Comenzar mi viaje
-        </motion.button>
+        {esUltimoPaso && (
+          <motion.button
+            type="button"
+            onClick={comenzar}
+            animate={{ scale: [1, 1.02, 1] }}
+            transition={{ duration: 1.8, repeat: Infinity }}
+            className="mt-4 min-h-12 w-full rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-emerald-800"
+          >
+            Comenzar mi viaje
+          </motion.button>
+        )}
 
         <button
           type="button"
