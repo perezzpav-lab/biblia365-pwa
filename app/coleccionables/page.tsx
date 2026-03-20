@@ -2,12 +2,12 @@
 
 import { Sparkles, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { FAMILY_PROFILES_KEY, FAMILY_SELECTED_PROFILE_KEY } from "@/lib/family-types";
 
 const BADGES_KEY = "biblia365_badges_v1";
 const STICKERS_KEY = "biblia365_stickers_v1";
 const XP_KEY = "biblia365_xp_v1";
 const STORAGE_KEY = "biblia365_dias_completados_v1";
-const FAMILY_SELECTED_PROFILE_KEY = "biblia365_selected_profile";
 
 function profileScopedKey(base: string, profileId: string | null): string {
   return `${base}:${profileId ?? "global"}`;
@@ -22,9 +22,18 @@ type AnimalCard = {
 };
 
 export default function ColeccionablesPage() {
-  const [profileId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(FAMILY_SELECTED_PROFILE_KEY);
+  const [selectedProfileIsChild] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const sel = localStorage.getItem(FAMILY_SELECTED_PROFILE_KEY);
+      const raw = localStorage.getItem(FAMILY_PROFILES_KEY);
+      if (!raw || !sel) return false;
+      const profiles = JSON.parse(raw) as { id: string; role?: string }[];
+      if (!Array.isArray(profiles)) return false;
+      return profiles.find((p) => p.id === sel)?.role === "child";
+    } catch {
+      return false;
+    }
   });
   const [xp] = useState<number>(() => {
     if (typeof window === "undefined") return 0;
@@ -103,7 +112,7 @@ export default function ColeccionablesPage() {
         <section className={`rounded-3xl border p-6 shadow-xl ${isNightMode ? "border-zinc-700 bg-zinc-900/80" : "border-amber-200 bg-white"}`}>
           <p className="text-sm font-semibold text-amber-700">Álbum de cartas coleccionables</p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900 dark:text-slate-100">
-            {profileId === "eliana" ? "Animalitos del Arca de Noé" : "Mis Coleccionables"}
+            {selectedProfileIsChild ? "Animalitos del Arca de Noé" : "Mis Coleccionables"}
           </h1>
           <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
             Has desbloqueado {unlockedCount} de {animals.length} cartas.
