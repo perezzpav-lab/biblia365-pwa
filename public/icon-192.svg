@@ -1,0 +1,8 @@
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Biblia 365">
+  <rect width="192" height="192" rx="38" fill="#047857" />
+  <rect x="42" y="38" width="108" height="116" rx="12" fill="#ffffff" />
+  <rect x="55" y="48" width="8" height="96" rx="4" fill="#a7f3d0" />
+  <path d="M78 73h46M78 93h46M78 113h30" stroke="#047857" stroke-width="8" stroke-linecap="round" />
+  <circle cx="136" cy="132" r="14" fill="#10b981" />
+  <text x="136" y="137" text-anchor="middle" font-size="14" font-family="Arial, sans-serif" font-weight="700" fill="#ffffff">365</text>
+</svg>
