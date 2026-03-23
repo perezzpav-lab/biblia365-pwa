@@ -12,6 +12,8 @@ export type ProfileStatsPayload = {
   stickers: string[];
   mode: ModoLectura;
   updated_at: string;
+  /** YYYY-MM-DD en calendario local del dispositivo al pulsar “Completar día”. */
+  last_calendar_complete_date?: string | null;
 };
 
 export type ProfileSyncQueueItem = {

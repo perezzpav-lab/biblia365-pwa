@@ -2,8 +2,7 @@
 
 import { motion } from "framer-motion";
 import { SearchCheck } from "lucide-react";
-import { useMemo, useState } from "react";
-import * as Tone from "tone";
+import { useCallback, useMemo, useState, type PointerEvent } from "react";
 import type { ModoLectura } from "@/components/home/ModeSwitcher";
 
 type Props = {
@@ -146,6 +145,7 @@ function vibrate(pattern: number | number[]) {
 export default function WordSearchChallenge({ mode, onFinish }: Props) {
   const words = useMemo(() => WORDS_BY_MODE[mode], [mode]);
   const { cells, placements } = useMemo(() => createGrid(words), [words]);
+  const cellById = useMemo(() => new Map(cells.map((c) => [c.id, c])), [cells]);
   const [dragStart, setDragStart] = useState<Cell | null>(null);
   const [dragEnd, setDragEnd] = useState<Cell | null>(null);
   const [foundWords, setFoundWords] = useState<string[]>([]);
@@ -176,14 +176,17 @@ export default function WordSearchChallenge({ mode, onFinish }: Props) {
     return ids;
   }, [dragStart, dragEnd]);
 
-  const playSuccess = async () => {
-    await Tone.start();
-    const synth = new Tone.Synth().toDestination();
-    synth.triggerAttackRelease("C5", "8n");
-    synth.triggerAttackRelease("E5", "8n", "+0.08");
-    synth.triggerAttackRelease("G5", "8n", "+0.16");
-    window.setTimeout(() => synth.dispose(), 450);
-  };
+  const resolveCellAtPoint = useCallback(
+    (clientX: number, clientY: number): Cell | null => {
+      if (typeof document === "undefined") return null;
+      const el = document.elementFromPoint(clientX, clientY);
+      const target = el?.closest?.("[data-wordsearch-cell]");
+      const id = target?.getAttribute("data-wordsearch-cell");
+      if (!id) return null;
+      return cellById.get(id) ?? null;
+    },
+    [cellById],
+  );
 
   const checkSelection = async () => {
     if (activeSelection.length === 0 || !dragStart || !dragEnd) {
@@ -207,22 +210,41 @@ export default function WordSearchChallenge({ mode, onFinish }: Props) {
       if (completesAll) {
         window.setTimeout(() => vibrate([100, 50, 100, 50, 200]), 170);
       }
-      await playSuccess();
     }
     setDragStart(null);
     setDragEnd(null);
   };
 
-  const onPointerDownCell = (cell: Cell) => {
+  const onGridPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const cell = resolveCellAtPoint(e.clientX, e.clientY);
+    if (!cell) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
     vibrate(50);
     setDragStart(cell);
     setDragEnd(cell);
   };
 
-  const onPointerEnterCell = (cell: Cell) => {
-    if (!dragStart) return;
-    vibrate(50);
-    setDragEnd(cell);
+  const onGridPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const cell = resolveCellAtPoint(e.clientX, e.clientY);
+    if (cell) setDragEnd(cell);
+  };
+
+  const onGridPointerUp = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    void checkSelection();
+  };
+
+  const onGridPointerCancel = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    setDragStart(null);
+    setDragEnd(null);
   };
 
   const syncGridWidth = (node: HTMLDivElement | null) => {
@@ -282,15 +304,18 @@ export default function WordSearchChallenge({ mode, onFinish }: Props) {
 
       <div
         ref={syncGridWidth}
-        className="relative mt-3 grid select-none gap-1 rounded-2xl bg-zinc-100 p-2 touch-none"
-        role="presentation"
+        className="relative mt-3 grid select-none gap-1 rounded-2xl bg-zinc-100 p-2"
+        role="application"
+        aria-label="Sopa de letras: arrastra en diagonal, horizontal o vertical"
         style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, minmax(0, 1fr))`, touchAction: "none" }}
-        onPointerUp={() => void checkSelection()}
-        onPointerCancel={() => {
-          setDragStart(null);
-          setDragEnd(null);
+        onPointerDown={onGridPointerDown}
+        onPointerMove={onGridPointerMove}
+        onPointerUp={onGridPointerUp}
+        onPointerCancel={onGridPointerCancel}
+        onPointerLeave={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) return;
+          void checkSelection();
         }}
-        onPointerLeave={() => void checkSelection()}
       >
         <div className="pointer-events-none absolute inset-0">
           {foundLines.map((line) => (
@@ -325,8 +350,8 @@ export default function WordSearchChallenge({ mode, onFinish }: Props) {
             <button
               key={cell.id}
               type="button"
-              onPointerDown={() => onPointerDownCell(cell)}
-              onPointerEnter={() => onPointerEnterCell(cell)}
+              data-wordsearch-cell={cell.id}
+              tabIndex={-1}
               className={`relative z-10 aspect-square rounded-md text-center text-xs font-bold sm:text-sm ${
                 found
                   ? "bg-emerald-200 text-emerald-900"

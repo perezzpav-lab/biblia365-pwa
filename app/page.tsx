@@ -10,10 +10,13 @@ import {
   CloudAlert,
   CloudOff,
   Flame,
+  Gamepad2,
+  Heart,
   Loader2,
   LogOut,
   Share2,
   Sparkles,
+  Sun,
   Thermometer,
   User,
   XCircle,
@@ -61,6 +64,7 @@ import {
   type FamilyProfile,
 } from "@/lib/family-types";
 import { fetchFamilyForUser, upsertFamilyForUser } from "@/lib/family-supabase";
+import { getLocalDateKey } from "@/lib/local-calendar";
 
 type PlanBiblico = {
   id_dia: number;
@@ -116,6 +120,9 @@ const STICKERS_KEY = "biblia365_stickers_v1";
 const THEME_PREF_KEY = "biblia365_theme_pref";
 const PROFILE_UPDATED_AT_KEY = "biblia365_profile_updated_at";
 const GAME_WIN_DAYS_KEY = "biblia365_game_win_days";
+const CALENDAR_COMPLETE_KEY = "biblia365_calendar_complete_v2";
+
+type HomeMainTab = "hoy" | "biblia" | "oracion" | "juegos";
 
 const THEMES: Record<
   ModoLectura,
@@ -352,6 +359,8 @@ export default function Home() {
   const [unlockedStickers, setUnlockedStickers] = useState<string[]>([]);
   const [syncVisualState, setSyncVisualState] = useState<"synced" | "pending" | "error">("synced");
   const [gameWinDays, setGameWinDays] = useState<number[]>([]);
+  const [homeTab, setHomeTab] = useState<HomeMainTab>("hoy");
+  const [lastCalendarCompleteDate, setLastCalendarCompleteDate] = useState<string | null>(null);
 
   const theme = THEMES[modo];
   const selectedProfile = familyProfiles.find((profile) => profile.id === selectedProfileId) ?? null;
@@ -395,6 +404,13 @@ export default function Home() {
         prayerWall: "Go to Prayer Wall",
         hallOfFame: "View Hall of Fame",
         duel: "Enter 1v1 Duel",
+        completedDay: "Day completed!",
+        tabToday: "Today",
+        tabBible: "Bible",
+        tabPrayer: "Prayer",
+        tabGames: "Games",
+        openBibleReader: "Open full Bible reader",
+        inviteQuiz: "Invite — shared quiz",
       }
     : {
         goodDay: "¡Buen día",
@@ -413,6 +429,13 @@ export default function Home() {
         prayerWall: "Ir al Muro de Oración",
         hallOfFame: "Ver Hall of Fame",
         duel: "Entrar a Duelo 1 vs 1",
+        completedDay: "¡Día completado!",
+        tabToday: "Hoy",
+        tabBible: "Biblia",
+        tabPrayer: "Oración",
+        tabGames: "Juegos",
+        openBibleReader: "Abrir lector de Biblia",
+        inviteQuiz: "Invitar — quiz compartido",
       };
   const temporadaActual = getSeasonByDay(diaActual, diasTotales);
   const rutaBiblia = plan ? formatBibleRoute(plan.pasaje) : null;
@@ -425,6 +448,7 @@ export default function Home() {
     { id: "family_light", name: "Luz de familia", emoji: "✨", unlocked: insignias.length >= 1 },
   ];
   const readCompletedToday = diasCompletados.includes(diaActual);
+  const completedTodayCalendar = lastCalendarCompleteDate === getLocalDateKey();
   const gameCompletedToday = gameWinDays.includes(diaActual);
   const spiritualMeter = (readCompletedToday ? 50 : 0) + (gameCompletedToday ? 50 : 0);
 
@@ -440,6 +464,7 @@ export default function Home() {
       stickers: unlockedStickers,
       mode: modo,
       updated_at: updatedAt,
+      last_calendar_complete_date: lastCalendarCompleteDate,
     };
   };
 
@@ -539,6 +564,7 @@ export default function Home() {
     const xpKey = profileScopedKey(XP_KEY, selectedProfileId);
     const stickersKey = profileScopedKey(STICKERS_KEY, selectedProfileId);
     const gameWinsKey = profileScopedKey(GAME_WIN_DAYS_KEY, selectedProfileId);
+    const calendarKey = profileScopedKey(CALENDAR_COMPLETE_KEY, selectedProfileId);
 
     const modeStored = localStorage.getItem(modeKey);
     let selectedRole: FamilyProfile["role"] | null = null;
@@ -622,6 +648,8 @@ export default function Home() {
     } else {
       setGameWinDays([]);
     }
+
+    setLastCalendarCompleteDate(localStorage.getItem(calendarKey));
   }, [onboardingVerificado, selectedProfileId, diasTotales]);
 
   useEffect(() => {
@@ -631,7 +659,9 @@ export default function Home() {
       setSyncVisualState("pending");
       const { data, error } = await supabase
         .from("profile_stats")
-        .select("xp_total, streak_value, completed_days, badges, stickers, mode, updated_at")
+        .select(
+          "xp_total, streak_value, completed_days, badges, stickers, mode, updated_at, last_calendar_complete_date",
+        )
         .eq("user_id", userId)
         .eq("profile_id", selectedProfileId)
         .maybeSingle();
@@ -653,9 +683,11 @@ export default function Home() {
         stickers: string[];
         mode: ModoLectura;
         updated_at: string;
+        last_calendar_complete_date?: string | null;
       };
 
       const updatedAtKey = profileScopedKey(PROFILE_UPDATED_AT_KEY, selectedProfileId);
+      const calendarKey = profileScopedKey(CALENDAR_COMPLETE_KEY, selectedProfileId);
       const localUpdatedAt = localStorage.getItem(updatedAtKey);
       const cloudUpdatedAt = new Date(typedData.updated_at).getTime();
       const localTs = localUpdatedAt ? new Date(localUpdatedAt).getTime() : 0;
@@ -684,6 +716,14 @@ export default function Home() {
         localStorage.setItem(stickersKey, JSON.stringify(typedData.stickers ?? []));
         localStorage.setItem(modeKey, typedData.mode ?? "adulto");
         localStorage.setItem(updatedAtKey, typedData.updated_at);
+
+        const cloudCal = typedData.last_calendar_complete_date ?? null;
+        if (cloudCal) {
+          localStorage.setItem(calendarKey, cloudCal);
+          setLastCalendarCompleteDate(cloudCal);
+        } else {
+          setLastCalendarCompleteDate(localStorage.getItem(calendarKey));
+        }
       }
       setSyncVisualState("synced");
     };
@@ -1048,7 +1088,18 @@ export default function Home() {
     if (!plan) return;
     if (!selectedProfileId) return;
 
+    const today = getLocalDateKey();
+    if (lastCalendarCompleteDate === today) {
+      setCompletionMessage(
+        language === "en"
+          ? "You already completed today. Come back tomorrow!"
+          : "¡Ya completaste el día de hoy! Vuelve mañana.",
+      );
+      return;
+    }
+
     const daysKey = profileScopedKey(STORAGE_KEY, selectedProfileId);
+    const calendarKey = profileScopedKey(CALENDAR_COMPLETE_KEY, selectedProfileId);
     const streakKey = profileScopedKey(LOCAL_STREAK_KEY, selectedProfileId);
     const lastActivityKey = profileScopedKey(LOCAL_LAST_ACTIVITY_AT_KEY, selectedProfileId);
     const badgesKey = profileScopedKey(BADGES_KEY, selectedProfileId);
@@ -1083,6 +1134,9 @@ export default function Home() {
     setUnlockedStickers(nextStickers);
     localStorage.setItem(stickersKey, JSON.stringify(nextStickers));
 
+    localStorage.setItem(calendarKey, today);
+    setLastCalendarCompleteDate(today);
+
     const localPayload: ProfileStatsPayload = {
       user_id: userId ?? "",
       profile_id: selectedProfileId,
@@ -1093,6 +1147,7 @@ export default function Home() {
       stickers: nextStickers,
       mode: modo,
       updated_at: now.toISOString(),
+      last_calendar_complete_date: today,
     };
     persistProfileUpdatedAt(localPayload.updated_at);
 
@@ -1118,6 +1173,21 @@ export default function Home() {
 
     const payload = { ...localPayload, user_id: userId };
     await syncProfileStatsCloud(payload);
+
+    const { error: activityErr } = await supabase.from("daily_activity").upsert(
+      buildDailyActivityPayload({
+        userId,
+        day: diaActual,
+        mode: modo,
+        updatedAt: now.toISOString(),
+        streakValue: nextLocalStreak,
+      }),
+      { onConflict: "user_id,id_dia" },
+    );
+    if (activityErr) {
+      setDebugInfo(toDebugInfo(activityErr, "complete_day.daily_activity"));
+    }
+
     setCompletionMessage(`Día completado en perfil ${selectedProfile?.name ?? selectedProfileId}.`);
   };
 
@@ -1247,6 +1317,7 @@ export default function Home() {
       localStorage.setItem(stickersKey, JSON.stringify([]));
       localStorage.setItem(profileScopedKey(GAME_WIN_DAYS_KEY, selectedProfileId), JSON.stringify([]));
       localStorage.removeItem(profileScopedKey(PROFILE_UPDATED_AT_KEY, selectedProfileId));
+      localStorage.removeItem(profileScopedKey(CALENDAR_COMPLETE_KEY, selectedProfileId));
 
       if (userId && selectedProfileId) {
         clearProfileQueue(userId, selectedProfileId);
@@ -1258,6 +1329,7 @@ export default function Home() {
       setUserXp(0);
       setUnlockedStickers([]);
       setGameWinDays([]);
+      setLastCalendarCompleteDate(null);
       setCompletionMessage("Plan reiniciado. Volvemos al Día 1.");
       setSyncError(null);
       setDiaActual(1);
@@ -1278,6 +1350,7 @@ export default function Home() {
       localStorage.setItem(profileScopedKey(STICKERS_KEY, selectedProfileId), JSON.stringify([]));
       localStorage.setItem(profileScopedKey(GAME_WIN_DAYS_KEY, selectedProfileId), JSON.stringify([]));
       localStorage.removeItem(profileScopedKey(PROFILE_UPDATED_AT_KEY, selectedProfileId));
+      localStorage.removeItem(profileScopedKey(CALENDAR_COMPLETE_KEY, selectedProfileId));
       if (userId) {
         clearProfileQueue(userId, selectedProfileId);
       }
@@ -1420,6 +1493,83 @@ export default function Home() {
             {debugInfo.hint && <p className="text-[11px]">hint: {debugInfo.hint}</p>}
           </motion.section>
         )}
+        <header
+          className={`sticky top-0 z-40 -mx-4 mb-2 border-b px-4 pb-3 pt-2 backdrop-blur-lg ${
+            isDarkUi ? "border-zinc-700/80 bg-zinc-950/90" : "border-stone-200/90 bg-white/90"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <p
+              className={`shrink-0 text-base font-bold tracking-tight ${isDarkUi ? "text-emerald-400" : "text-emerald-800"}`}
+            >
+              Biblia 365
+            </p>
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+              {userEmail ? (
+                <span className="hidden max-w-[42%] truncate text-[11px] text-zinc-500 sm:inline dark:text-zinc-400">
+                  {userEmail}
+                </span>
+              ) : null}
+              {userId ? (
+                <button
+                  type="button"
+                  onClick={() => void cerrarSesion()}
+                  className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    isDarkUi ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-800"
+                  }`}
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  {language === "en" ? "Log out" : "Salir"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAuthModalAbierto(true)}
+                  className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold ${theme.accent}`}
+                >
+                  <User className="h-3.5 w-3.5" />
+                  {language === "en" ? "Sign in" : "Iniciar sesión"}
+                </button>
+              )}
+            </div>
+          </div>
+          <nav className="mt-3 flex gap-1.5 overflow-x-auto pb-0.5" role="tablist" aria-label="Principal">
+            {(
+              [
+                { id: "hoy" as const, label: t.tabToday, Icon: Sun },
+                { id: "biblia" as const, label: t.tabBible, Icon: BookOpenText },
+                { id: "oracion" as const, label: t.tabPrayer, Icon: Heart },
+                { id: "juegos" as const, label: t.tabGames, Icon: Gamepad2 },
+              ] as const
+            ).map(({ id, label, Icon }) => {
+              const active = homeTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setHomeTab(id)}
+                  className={`flex min-w-[4.75rem] shrink-0 flex-col items-center gap-0.5 rounded-xl px-3 py-2 text-[11px] font-semibold transition ${
+                    active
+                      ? isDarkUi
+                        ? "bg-emerald-600 text-white shadow-lg shadow-emerald-900/40"
+                        : "bg-emerald-700 text-white shadow-md"
+                      : isDarkUi
+                        ? "bg-zinc-800/80 text-zinc-300"
+                        : "bg-stone-100 text-stone-600"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" aria-hidden />
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
+        </header>
+
+        {homeTab === "hoy" && (
+          <>
         <motion.section
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1468,16 +1618,6 @@ export default function Home() {
                     ? "☁️ Pendiente"
                     : "☁️ Error sync"}
               </div>
-              {userId && (
-                <button
-                  type="button"
-                  onClick={() => void cerrarSesion()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-200"
-                >
-                  <LogOut className="h-3 w-3" />
-                  Cerrar sesión
-                </button>
-              )}
             </div>
           </div>
 
@@ -1587,8 +1727,10 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => {
-                  const flow = document.getElementById("flow-reflexion");
-                  if (flow) flow.scrollIntoView({ behavior: "smooth", block: "start" });
+                  setHomeTab("hoy");
+                  window.requestAnimationFrame(() => {
+                    document.getElementById("flow-reflexion")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  });
                 }}
                 className={`mt-4 w-full rounded-2xl px-4 py-3 text-sm font-semibold ${theme.accent}`}
               >
@@ -1604,34 +1746,20 @@ export default function Home() {
                 </button>
               )}
               <div className="mt-3 flex flex-wrap gap-2">
-                <ReadingAudioPlayer text={`${plan.titulo}. ${plan.pasaje}. ${reflexionActual}`} />
+                <ReadingAudioPlayer
+                  language={language === "en" ? "en" : "es"}
+                  text={`${plan.titulo}. ${plan.pasaje}. ${reflexionActual}`}
+                />
                 <button
                   type="button"
-                  onClick={() => {
-                    const gameZone = document.getElementById("game-zone");
-                    if (gameZone) gameZone.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
-                  className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800"
+                  onClick={() => setHomeTab("juegos")}
+                  className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
                 >
                   {t.trainGames}
                 </button>
               </div>
             </>
           )}
-        </motion.section>
-
-        <motion.section
-          id="game-zone"
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.35 }}
-          transition={{ duration: 0.32, delay: 0.12 }}
-        >
-          <MiniGamesHub
-            mode={modo}
-            kidDisplayName={modo === "nino" ? nombreUsuario : undefined}
-            onFinish={guardarXpJuego}
-          />
         </motion.section>
 
         <motion.section
@@ -1748,10 +1876,11 @@ export default function Home() {
             >
               <button
                 type="button"
+                disabled={completedTodayCalendar}
                 onClick={() => void completarDia()}
-                className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold ${theme.accent}`}
+                className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${theme.accent}`}
               >
-                {t.completeDay}
+                {completedTodayCalendar ? t.completedDay : t.completeDay}
               </button>
               {completionMessage && <p className={`mt-3 text-sm ${isDarkUi ? "text-emerald-300" : "text-emerald-700"}`}>{completionMessage}</p>}
               {insignias.length > 0 && (
@@ -1775,63 +1904,212 @@ export default function Home() {
 
           </>
         )}
+          </>
+        )}
+
+        {homeTab === "biblia" && (
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`rounded-3xl p-5 shadow-lg ${theme.card}`}
+          >
+            <h2 className={`inline-flex items-center gap-2 text-lg ${theme.heading}`}>
+              <BookOpenText className="h-5 w-5 text-emerald-700" />
+              {t.tabBible}
+            </h2>
+            <p className={`mt-1 text-xs ${theme.body}`}>{t.bibleText}</p>
+            {loading ? (
+              <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {language === "en" ? "Loading…" : "Cargando…"}
+              </div>
+            ) : error ? (
+              <p className={`mt-3 text-sm ${isDarkUi ? "text-red-300" : "text-red-600"}`}>{error}</p>
+            ) : !plan ? (
+              <div className={`mt-3 rounded-2xl p-4 text-center ${theme.mutedCard}`}>
+                <Sparkles className="mx-auto h-10 w-10 text-emerald-600" />
+                <p className={`mt-3 ${theme.heading}`}>
+                  {language === "en" ? "We are preparing this for you." : "Estamos preparando este tesoro para ti."}
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className={`mt-3 text-xl leading-relaxed text-slate-900 dark:text-slate-100 ${theme.heading}`}>
+                  {plan.pasaje}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <ReadingAudioPlayer
+                    language={language === "en" ? "en" : "es"}
+                    text={`${plan.titulo}. ${plan.pasaje}. ${reflexionActual}`}
+                  />
+                </div>
+                {rutaBiblia && (
+                  <button
+                    type="button"
+                    onClick={() => router.push(rutaBiblia)}
+                    className="mt-3 w-full rounded-2xl border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800 dark:border-violet-600 dark:bg-violet-950/40 dark:text-violet-200"
+                  >
+                    {t.openBibleReader}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => router.push("/biblia")}
+                  className={`mt-2 w-full rounded-2xl px-4 py-3 text-sm font-semibold ${theme.accent}`}
+                >
+                  {language === "en" ? "Open Bible app" : "Abrir lector completo"}
+                </button>
+              </>
+            )}
+          </motion.section>
+        )}
+
+        {homeTab === "oracion" && (
+          <div className="flex flex-col gap-4">
+            {!plan ? (
+              <motion.section className={`rounded-3xl p-5 ${theme.mutedCard}`}>
+                <p className={`text-sm ${theme.body}`}>
+                  {language === "en" ? "Load today’s reading first (Today tab)." : "Carga la lectura del día en la pestaña Hoy."}
+                </p>
+              </motion.section>
+            ) : (
+              <>
+                <motion.section className={`rounded-3xl p-5 shadow-lg ${theme.mutedCard}`}>
+                  <h3 className={`text-base ${theme.heading}`}>{theme.practicalLabel}</h3>
+                  <p className={`mt-3 text-sm leading-7 ${theme.body}`}>{theme.practicalText}</p>
+                </motion.section>
+                <motion.section className={`rounded-3xl p-5 shadow-lg ${theme.card}`}>
+                  <h3 className={`text-base ${theme.heading}`}>{theme.prayerLabel}</h3>
+                  <p className={`mt-3 text-sm leading-7 ${theme.body}`}>{theme.prayerText}</p>
+                  <button
+                    type="button"
+                    onClick={() => void compartirEnWhatsApp()}
+                    className={`mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${theme.accentSoft}`}
+                  >
+                    <Share2 className="h-4 w-4" />
+                    {language === "en" ? "Share verse" : "Compartir versículo"}
+                  </button>
+                </motion.section>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => router.push("/oracion")}
+              className="w-full rounded-2xl border border-violet-300 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-800 dark:border-violet-600 dark:bg-violet-950/30 dark:text-violet-200"
+            >
+              {t.prayerWall}
+            </button>
+          </div>
+        )}
+
+        {homeTab === "juegos" && (
+          <motion.section
+            id="game-zone"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-3"
+          >
+            <MiniGamesHub
+              mode={modo}
+              kidDisplayName={modo === "nino" ? nombreUsuario : undefined}
+              onFinish={guardarXpJuego}
+            />
+            <button
+              type="button"
+              onClick={() => router.push("/compartir")}
+              className="w-full rounded-2xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+            >
+              {t.inviteQuiz}
+            </button>
+          </motion.section>
+        )}
 
         <motion.section
           initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, amount: 0.35 }}
           transition={{ duration: 0.32 }}
-          className={`rounded-3xl p-5 shadow-lg ${theme.card}`}
+          className={`rounded-3xl p-4 shadow-lg ${theme.card}`}
         >
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-slate-500">
-              {userEmail ? `${t.syncedAs} ${userEmail}` : t.signInCloud}
-            </p>
-            {userId ? (
-              <button
-                type="button"
-                onClick={() => void cerrarSesion()}
-                className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                Salir
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setAuthModalAbierto(true)}
-                className={`inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold ${theme.accentSoft}`}
-              >
-                <User className="h-3.5 w-3.5" />
-                Iniciar sesión
-              </button>
-            )}
+          <p className="text-center text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            {userEmail ? `${t.syncedAs} ${userEmail}` : t.signInCloud}
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/ranking")}
+              className="rounded-xl border border-emerald-200 bg-emerald-50 py-2.5 text-xs font-semibold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+            >
+              {t.viewRanking}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/oracion")}
+              className="rounded-xl border border-violet-200 bg-violet-50 py-2.5 text-xs font-semibold text-violet-800 dark:border-violet-700 dark:bg-violet-950/30 dark:text-violet-200"
+            >
+              {t.prayerWall}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/biblia")}
+              className="rounded-xl border border-sky-200 bg-sky-50 py-2.5 text-xs font-semibold text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200"
+            >
+              Biblia
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/compartir")}
+              className="rounded-xl border border-emerald-200 bg-white py-2.5 text-xs font-semibold text-emerald-800 dark:border-emerald-700 dark:bg-zinc-900 dark:text-emerald-200"
+            >
+              {language === "en" ? "Invite" : "Invitar"}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/duelo")}
+              className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 py-2.5 text-xs font-semibold text-fuchsia-800 dark:border-fuchsia-700 dark:bg-fuchsia-950/30 dark:text-fuchsia-200"
+            >
+              {language === "en" ? "Duel" : "Duelo"}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/hall-of-fame")}
+              className="rounded-xl border border-amber-200 bg-amber-50 py-2.5 text-xs font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200"
+            >
+              Hall of Fame
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/coleccionables")}
+              className="col-span-2 rounded-xl border border-amber-200/80 bg-amber-50/80 py-2.5 text-xs font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-100"
+            >
+              {language === "en" ? "Collectibles" : "Coleccionables"}
+            </button>
           </div>
           <button
             type="button"
             onClick={() => void reiniciarPlan()}
-            className="mt-4 w-full rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+            className="mt-3 w-full rounded-xl border border-red-200 bg-red-50 py-2 text-xs font-semibold text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
           >
             {t.resetPlan}
           </button>
           <button
             type="button"
             onClick={() => setShowProfilePicker(true)}
-            className="mt-2 w-full rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 transition hover:bg-indigo-100"
+            className="mt-2 w-full rounded-xl border border-indigo-200 bg-indigo-50 py-2 text-xs font-semibold text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200"
           >
-            {language === "en" ? "Switch Profile" : "Cambiar Perfil"}
+            {language === "en" ? "Switch profile" : "Cambiar perfil"}
           </button>
           {selectedProfile?.role === "admin" && (
-            <div className="mt-2 rounded-xl border border-zinc-200 bg-zinc-50 p-2">
-              <p className="text-xs font-semibold text-zinc-700">
-                {language === "en" ? "Add Family Profile" : "Añadir Perfil Familiar"}
+            <div className="mt-2 rounded-xl border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-700 dark:bg-zinc-900/50">
+              <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                {language === "en" ? "Add family profile" : "Añadir perfil familiar"}
               </p>
               <div className="mt-2 flex gap-2">
                 <input
                   value={newProfileName}
                   onChange={(event) => setNewProfileName(event.target.value)}
-                  placeholder={language === "en" ? "New profile name" : "Nombre del nuevo perfil"}
-                  className="w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs"
+                  placeholder={language === "en" ? "Name" : "Nombre"}
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs dark:border-zinc-600 dark:bg-zinc-950"
                 />
                 <button
                   type="button"
@@ -1843,85 +2121,37 @@ export default function Home() {
               </div>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => router.push("/ranking")}
-            className="mt-2 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
-          >
-            {t.viewRanking}
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/oracion")}
-            className="mt-2 w-full rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800 transition hover:bg-violet-100"
-          >
-            {t.prayerWall}
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/hall-of-fame")}
-            className="mt-2 w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
-          >
-            {t.hallOfFame}
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/coleccionables")}
-            className={`mt-2 w-full rounded-xl border px-4 py-2 text-sm font-semibold transition ${
-              isDarkUi
-                ? "border-amber-300/40 bg-amber-900/20 text-amber-200 hover:bg-amber-900/30"
-                : "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
-            }`}
-          >
-            Abrir Álbum de Coleccionables
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/biblia")}
-            className="mt-2 w-full rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-100"
-          >
-            Abrir Lector de Biblia
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/duelo")}
-            className="mt-2 w-full rounded-xl border border-fuchsia-200 bg-fuchsia-50 px-4 py-2 text-sm font-semibold text-fuchsia-800 transition hover:bg-fuchsia-100"
-          >
-            {t.duel}
-          </button>
-          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
-            <p className="text-sm font-semibold text-amber-900">Mis Coleccionables</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {insignias.map((badge) => (
-                <span
-                  key={badge}
-                  className="rounded-full border border-emerald-300 bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900"
-                >
-                  🏅 {badge}
-                </span>
-              ))}
-              {insignias.length === 0 && (
-                <span className="rounded-full border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-600">
-                  Aún sin insignias
-                </span>
-              )}
+          {(insignias.length > 0 || stickers.some((s) => s.unlocked)) && (
+            <div className="mt-3 rounded-xl border border-zinc-200/80 bg-zinc-50/80 p-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+              <p className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                {language === "en" ? "Highlights" : "Logros"}
+              </p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {insignias.slice(0, 4).map((badge) => (
+                  <span
+                    key={badge}
+                    className="rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200"
+                  >
+                    {badge}
+                  </span>
+                ))}
+                {stickers
+                  .filter((s) => s.unlocked)
+                  .slice(0, 6)
+                  .map((sticker) => (
+                    <span
+                      key={sticker.id}
+                      className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] dark:border-violet-700 dark:bg-violet-950/40"
+                    >
+                      {sticker.emoji}
+                    </span>
+                  ))}
+              </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {stickers.map((sticker) => (
-                <span
-                  key={sticker.id}
-                  className={`rounded-full border px-2 py-1 text-xs font-semibold ${
-                    sticker.unlocked
-                      ? "border-violet-300 bg-violet-100 text-violet-900"
-                      : "border-zinc-300 bg-white text-zinc-400"
-                  }`}
-                >
-                  {sticker.emoji} {sticker.name}
-                </span>
-              ))}
-            </div>
+          )}
+          <div className="mt-3">
+            <SettingsPanel userId={userId} avatarKey={avatarKey} onAvatarChange={setAvatarKey} />
           </div>
-          <SettingsPanel userId={userId} avatarKey={avatarKey} onAvatarChange={setAvatarKey} />
         </motion.section>
       </main>
 

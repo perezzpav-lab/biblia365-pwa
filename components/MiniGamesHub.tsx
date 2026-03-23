@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import {
   Gamepad2,
+  Link2,
   ListChecks,
   Puzzle,
   Search,
@@ -33,6 +34,8 @@ type GameResult = {
 
 type Props = {
   mode: ModoLectura;
+  /** Nombre del perfil activo en modo niño (saludo y audio personalizados) */
+  kidDisplayName?: string;
   onFinish: (result: GameResult) => Promise<void> | void;
 };
 
@@ -47,11 +50,12 @@ const GAME_TABS: Array<{ key: GameKey; label: string; Icon: typeof Sparkles }> =
   { key: "wordSearch", label: "Sopa Bíblica", Icon: Search },
 ];
 
-export default function MiniGamesHub({ mode, onFinish }: Props) {
+export default function MiniGamesHub({ mode, kidDisplayName, onFinish }: Props) {
   const router = useRouter();
   const [activeGame, setActiveGame] = useState<GameKey>("trivia");
   const greetedRef = useRef(false);
-  const greetingText = "¡Hola Eliana! ¿Lista para jugar y aprender?";
+  const childName = kidDisplayName?.trim() || "explorador";
+  const greetingText = `¡Hola ${childName}! ¿Todo listo para jugar y aprender con la Biblia?`;
 
   const triggerGreeting = () => {
     if (mode !== "nino" || greetedRef.current) return;
@@ -105,7 +109,15 @@ export default function MiniGamesHub({ mode, onFinish }: Props) {
           <Gamepad2 className={`${isKidMode ? "h-6 w-6 text-sky-600" : "h-4 w-4 text-emerald-700"}`} />
           Zona de Minijuegos
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => router.push("/compartir")}
+            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            Invitar / Quiz
+          </button>
           <button
             type="button"
             onClick={() => router.push("/duelo")}
@@ -127,8 +139,10 @@ export default function MiniGamesHub({ mode, onFinish }: Props) {
 
       {isKidMode && (
         <div className="mb-3 rounded-2xl border border-amber-200 bg-white/70 p-3">
-          <p className="mb-2 text-xs font-semibold text-amber-900">🎉 Mensaje para Eliana</p>
-          <ReadingAudioPlayer text={greetingText} />
+          <p className="mb-2 text-xs font-semibold text-amber-900">
+            🎉 Mensaje para {childName.charAt(0).toUpperCase() + childName.slice(1)}
+          </p>
+          <ReadingAudioPlayer language="es" text={greetingText} />
         </div>
       )}
 
