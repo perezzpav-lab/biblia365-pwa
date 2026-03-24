@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 dotenv.config({ path: resolve(".env.local") });
 dotenv.config();
 
-type BibleVersion = "RV1909" | "NVI" | "TLA";
+type BibleVersion = "RV1909" | "NVI" | "TLA" | "RVR1960" | "PDT";
 
 type BibleRow = {
   version: BibleVersion;
@@ -27,6 +27,8 @@ const DEFAULT_SOURCES: SourceConfig[] = [
   { version: "RV1909", source: process.env.BIBLE_SOURCE_RV1909 ?? "data/bibles/rv1909.json" },
   { version: "NVI", source: process.env.BIBLE_SOURCE_NVI ?? "data/bibles/nvi.json" },
   { version: "TLA", source: process.env.BIBLE_SOURCE_TLA ?? "data/bibles/tla.json" },
+  { version: "RVR1960", source: process.env.BIBLE_SOURCE_RVR1960 ?? "data/bibles/rvr1960.json" },
+  { version: "PDT", source: process.env.BIBLE_SOURCE_PDT ?? "data/bibles/pdt.json" },
 ];
 
 function assertEnv(name: string): string {
@@ -177,7 +179,7 @@ async function seedVersion(rows: BibleRow[], version: BibleVersion) {
 }
 
 async function run() {
-  console.log("🚀 Iniciando seed de Biblia (RV1909, NVI, TLA)...");
+  console.log("🚀 Iniciando seed de Biblia (RV1909, NVI, TLA, RVR1960, PDT)...");
   console.log(`📦 Tamaño de lote: ${CHUNK_SIZE}`);
   console.log(`📁 Ruta esperada RV1909: ${resolve(process.env.BIBLE_SOURCE_RV1909 ?? "data/bibles/rv1909.json")}`);
 

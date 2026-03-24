@@ -3,88 +3,32 @@
 import { CheckCircle2, Copy, Link2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-
-type QuizItem = {
-  question: string;
-  options: string[];
-  correct: number;
-};
-
-const BANK: QuizItem[] = [
-  {
-    question: "¿Quién libró a Daniel del foso de los leones?",
-    options: ["Dios", "El rey", "Los soldados"],
-    correct: 0,
-  },
-  {
-    question: "¿Qué libro viene después de los Evangelios?",
-    options: ["Hechos", "Romanos", "Apocalipsis"],
-    correct: 0,
-  },
-  {
-    question: "¿Cuántos días creó Dios el cielo y la tierra según Génesis 1?",
-    options: ["6 días", "7 días", "40 días"],
-    correct: 0,
-  },
-  {
-    question: "¿Quién fue arrojado al foso de los leones?",
-    options: ["Daniel", "Jonás", "Pedro"],
-    correct: 0,
-  },
-  {
-    question: "¿Qué debemos buscar primero según Mateo 6:33?",
-    options: ["El reino de Dios", "Las riquezas", "La fama"],
-    correct: 0,
-  },
-  {
-    question: "¿Quién venció a Goliat?",
-    options: ["David", "Saúl", "Samuel"],
-    correct: 0,
-  },
-];
-
-function hashSeed(str: string): number {
-  let h = 1779033703;
-  for (let i = 0; i < str.length; i += 1) {
-    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
-    h = (h << 13) | (h >>> 19);
-  }
-  return h >>> 0;
-}
-
-function mulberry32(seed: number) {
-  return function next() {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function pickQuiz(seedStr: string, count: number): QuizItem[] {
-  const rand = mulberry32(hashSeed(seedStr));
-  const pool = [...BANK];
-  const out: QuizItem[] = [];
-  while (out.length < count && pool.length > 0) {
-    const idx = Math.floor(rand() * pool.length);
-    out.push(pool.splice(idx, 1)[0]!);
-  }
-  return out;
-}
+import { pickSharedQuiz } from "@/lib/shared-quiz";
 
 function randomSeed(): string {
-  const bytes = new Uint8Array(6);
+  const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function clampQuestionCount(n: number): number {
+  if (!Number.isFinite(n)) return 7;
+  return Math.min(12, Math.max(5, Math.floor(n)));
 }
 
 export default function CompartirQuizClient() {
   const router = useRouter();
   const params = useSearchParams();
   const seedFromUrl = params.get("r") ?? "";
+  const countParam = Number(params.get("n") ?? "7");
+  const qCount = clampQuestionCount(countParam);
+
   const [copied, setCopied] = useState(false);
 
-  const questions = useMemo(() => (seedFromUrl ? pickQuiz(seedFromUrl, 3) : []), [seedFromUrl]);
+  const questions = useMemo(
+    () => (seedFromUrl ? pickSharedQuiz(seedFromUrl, qCount) : []),
+    [seedFromUrl, qCount],
+  );
 
   const [step, setStep] = useState(0);
   const [score, setScore] = useState(0);
@@ -92,22 +36,24 @@ export default function CompartirQuizClient() {
 
   const inviteUrl = useMemo(() => {
     if (typeof window === "undefined" || !seedFromUrl) return "";
-    return `${window.location.origin}/compartir?r=${seedFromUrl}`;
-  }, [seedFromUrl]);
+    const q = qCount !== 7 ? `&n=${qCount}` : "";
+    return `${window.location.origin}/compartir?r=${seedFromUrl}${q}`;
+  }, [seedFromUrl, qCount]);
 
   useEffect(() => {
     setStep(0);
     setScore(0);
     setFinished(false);
-  }, [seedFromUrl]);
+  }, [seedFromUrl, qCount]);
 
   const startNew = useCallback(() => {
     const s = randomSeed();
-    router.replace(`/compartir?r=${s}`);
+    const q = qCount !== 7 ? `&n=${qCount}` : "";
+    router.replace(`/compartir?r=${s}${q}`);
     setStep(0);
     setScore(0);
     setFinished(false);
-  }, [router]);
+  }, [router, qCount]);
 
   const copyLink = useCallback(async () => {
     if (!inviteUrl) return;
@@ -138,18 +84,35 @@ export default function CompartirQuizClient() {
           <div className="rounded-3xl border border-emerald-200 bg-white p-6 shadow-xl">
             <h1 className="inline-flex items-center gap-2 text-xl font-bold text-zinc-900">
               <Link2 className="h-6 w-6 text-emerald-600" />
-              Versículo compartido — Quiz rápido
+              Quiz compartido — Biblia 365
             </h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Crea un reto con enlace único. Quien abra el mismo enlace verá las mismas 3 preguntas: ideal para
-              competir con amigos o familia.
+              Cada invitación usa una semilla distinta: salen preguntas distintas del banco (y el orden de las respuestas
+              cambia). Misma URL = mismo reto para comparar con amigos.
             </p>
+            <label className="mt-4 block text-xs font-semibold text-zinc-700">
+              Preguntas por reto ({qCount})
+              <input
+                type="range"
+                min={5}
+                max={12}
+                value={qCount}
+                onChange={(e) => {
+                  const v = clampQuestionCount(Number(e.target.value));
+                  router.replace(`/compartir?n=${v}`);
+                }}
+                className="mt-2 w-full accent-emerald-600"
+              />
+            </label>
             <button
               type="button"
-              onClick={startNew}
+              onClick={() => {
+                const s = randomSeed();
+                router.replace(`/compartir?r=${s}&n=${qCount}`);
+              }}
               className="mt-5 w-full rounded-2xl bg-emerald-700 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-emerald-800"
             >
-              Crear invitación
+              Crear invitación nueva
             </button>
             <button
               type="button"
@@ -170,9 +133,9 @@ export default function CompartirQuizClient() {
         <div className="rounded-3xl border border-violet-200 bg-white p-5 shadow-xl">
           <p className="inline-flex items-center gap-2 text-sm font-semibold text-violet-800">
             <Sparkles className="h-4 w-4" />
-            Reto compartido
+            Reto compartido · {questions.length} preguntas
           </p>
-          <p className="mt-1 text-xs text-zinc-500">Código: {seedFromUrl.slice(0, 12)}…</p>
+          <p className="mt-1 text-xs text-zinc-500">Código: {seedFromUrl.slice(0, 14)}…</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
@@ -180,14 +143,14 @@ export default function CompartirQuizClient() {
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white"
             >
               <Copy className="h-4 w-4" />
-              {copied ? "¡Copiado!" : "Copiar enlace de invitación"}
+              {copied ? "¡Copiado!" : "Copiar enlace"}
             </button>
             <button
               type="button"
               onClick={startNew}
               className="rounded-xl border border-violet-300 px-4 py-2.5 text-sm font-semibold text-violet-800"
             >
-              Nuevo reto
+              Otro reto
             </button>
           </div>
         </div>
@@ -201,7 +164,7 @@ export default function CompartirQuizClient() {
             <div className="mt-4 space-y-2">
               {questions[step].options.map((opt, i) => (
                 <button
-                  key={opt}
+                  key={`${step}-${opt}`}
                   type="button"
                   onClick={() => answer(i)}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-left text-sm font-medium text-zinc-800 transition hover:border-violet-400 hover:bg-violet-50"
@@ -220,8 +183,7 @@ export default function CompartirQuizClient() {
               ¡Listo!
             </p>
             <p className="mt-2 text-sm text-emerald-800">
-              Puntuación: {score} / {questions.length}. Pídele a tu invitado que abra el mismo enlace y comparen
-              resultados.
+              Puntuación: {score} / {questions.length}. Comparte el mismo enlace para que otro jugador juegue el mismo set.
             </p>
             <button
               type="button"
@@ -234,11 +196,10 @@ export default function CompartirQuizClient() {
         )}
 
         <p className="text-center text-xs text-zinc-500">
-          Sin cuenta: solo comparten el mismo enlace. Para duelo en vivo con cuenta, usa{" "}
+          Para duelo en vivo con cuenta:{" "}
           <button type="button" className="font-semibold text-violet-700 underline" onClick={() => router.push("/duelo")}>
             Duelo 1 vs 1
           </button>
-          .
         </p>
       </main>
     </div>

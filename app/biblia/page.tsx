@@ -6,14 +6,23 @@ import { useSearchParams } from "next/navigation";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/components/LanguageProvider";
 import { supabase } from "@/lib/supabase";
+import { chapterNumbersForBook, SPANISH_BOOKS } from "@/lib/bible-canon";
+import {
+  ALL_READER_VERSIONS,
+  SEARCHABLE_DB_VERSIONS,
+  VERSION_LABELS,
+  type BibleVersion,
+  type DbBibleVersion,
+  isOnlineNetVersion,
+} from "@/lib/bible-versions";
 
-type BibleVersion = "RV1909" | "NVI" | "TLA";
 type VerseRow = { verse: number; text: string };
-type SearchResult = { version: BibleVersion; book: string; chapter: number; verse: number; text: string };
+type SearchResult = { version: DbBibleVersion; book: string; chapter: number; verse: number; text: string };
 type ReaderMode = "adulto" | "joven" | "nino";
 
 const DEFAULT_MODE_KEY = "biblia365_default_mode";
-const VERSIONS: BibleVersion[] = ["RV1909", "NVI", "TLA"];
+const READER_FONT_STEP_KEY = "biblia365_reader_font_step";
+const FONT_STEPS = [0.88, 1, 1.12, 1.28, 1.44] as const;
 
 const MODE_THEMES: Record<ReaderMode, {
   bg: string;
@@ -105,18 +114,6 @@ const MODE_THEMES: Record<ReaderMode, {
   },
 };
 
-const SPANISH_BOOKS = [
-  "Génesis","Éxodo","Levítico","Números","Deuteronomio","Josué","Jueces","Rut",
-  "1 Samuel","2 Samuel","1 Reyes","2 Reyes","1 Crónicas","2 Crónicas","Esdras",
-  "Nehemías","Ester","Job","Salmos","Proverbios","Eclesiastés","Cantares",
-  "Isaías","Jeremías","Lamentaciones","Ezequiel","Daniel","Oseas","Joel","Amós",
-  "Abdías","Jonás","Miqueas","Nahúm","Habacuc","Sofonías","Hageo","Zacarías","Malaquías",
-  "Mateo","Marcos","Lucas","Juan","Hechos","Romanos","1 Corintios","2 Corintios",
-  "Gálatas","Efesios","Filipenses","Colosenses","1 Tesalonicenses","2 Tesalonicenses",
-  "1 Timoteo","2 Timoteo","Tito","Filemón","Hebreos","Santiago","1 Pedro","2 Pedro",
-  "1 Juan","2 Juan","3 Juan","Judas","Apocalipsis",
-];
-
 function getDayOfYear(now: Date) {
   const start = new Date(now.getFullYear(), 0, 0);
   return Math.floor((now.getTime() - start.getTime()) / 86400000);
@@ -140,24 +137,31 @@ function BibliaClientPage() {
   const [primaryVersion, setPrimaryVersion] = useState<BibleVersion>("RV1909");
   const [secondaryVersion, setSecondaryVersion] = useState<BibleVersion>("NVI");
   const [compareMode, setCompareMode] = useState(false);
-  const [chapters, setChapters] = useState<number[]>([]);
   const [primaryVerses, setPrimaryVerses] = useState<VerseRow[]>([]);
   const [secondaryVerses, setSecondaryVerses] = useState<VerseRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [searchVersion, setSearchVersion] = useState<BibleVersion>("RV1909");
+  const [searchVersion, setSearchVersion] = useState<DbBibleVersion>("RV1909");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [dailyReference, setDailyReference] = useState<{ book: string; chapter: number; verse: number } | null>(null);
-  const [dailyVerses, setDailyVerses] = useState<Array<{ version: BibleVersion; text: string }>>([]);
+  const [dailyVerses, setDailyVerses] = useState<Array<{ version: string; text: string }>>([]);
   const [isNarrating, setIsNarrating] = useState(false);
+  const [fontStep, setFontStep] = useState(1);
 
   const T = MODE_THEMES[mode];
+  const fontRem = FONT_STEPS[Math.min(FONT_STEPS.length - 1, Math.max(0, fontStep))]!;
+
+  const setFontStepPersist = (next: number) => {
+    const clamped = Math.min(FONT_STEPS.length - 1, Math.max(0, next));
+    setFontStep(clamped);
+    localStorage.setItem(READER_FONT_STEP_KEY, String(clamped));
+  };
 
   const tx = language === "en"
     ? {
         title: "Smart Bible Reader",
-        subtitle: "Explore RV1909, NVI and TLA. Compare versions side by side.",
+        subtitle: "Five database versions (when seeded) plus full NET English online. Adjustable text size.",
         open: "Open",
         compare: "Compare",
         compareOn: "Compare: On",
@@ -173,7 +177,7 @@ function BibliaClientPage() {
       }
     : {
         title: "Lector Bíblico Inteligente",
-        subtitle: "Explora RV1909, NVI y TLA. Compara versiones en paralelo.",
+        subtitle: "Cinco versiones en base (si las cargas) + NET en inglés completo en línea. Tamaño de letra ajustable.",
         open: "Abrir",
         compare: "Comparar",
         compareOn: "Comparar: Activo",
@@ -198,6 +202,10 @@ function BibliaClientPage() {
         setSecondaryVersion("RV1909");
       }
     }
+    const stepIdx = Number(localStorage.getItem(READER_FONT_STEP_KEY));
+    if (Number.isFinite(stepIdx) && stepIdx >= 0 && stepIdx < FONT_STEPS.length) {
+      setFontStep(stepIdx);
+    }
   }, []);
 
   const handleModeChange = (next: ReaderMode) => {
@@ -210,26 +218,25 @@ function BibliaClientPage() {
   };
 
   useEffect(() => {
-    const loadChapters = async () => {
-      const { data, error } = await supabase
-        .from("bible_text")
-        .select("chapter")
-        .eq("version", primaryVersion)
-        .eq("book", book)
-        .order("chapter", { ascending: true })
-        .limit(400);
-      if (error) { setChapters([]); return; }
-      const unique = Array.from(new Set((data ?? []).map((row) => Number((row as { chapter?: number }).chapter)).filter(Number.isFinite)));
-      setChapters(unique);
-      if (!unique.includes(chapter) && unique.length > 0) setChapter(unique[0]);
-    };
-    void loadChapters();
-  }, [book, chapter, primaryVersion]);
+    const allowed = chapterNumbersForBook(book);
+    if (!allowed.includes(chapter)) setChapter(allowed[0] ?? 1);
+  }, [book, chapter]);
 
-  const loadVersesByVersion = async (version: BibleVersion) => {
+  const loadVersesByVersion = async (version: BibleVersion): Promise<VerseRow[]> => {
+    if (isOnlineNetVersion(version)) {
+      const res = await fetch(
+        `/api/bible/chapter?version=NET&book=${encodeURIComponent(book)}&chapter=${chapter}`,
+      );
+      const json = (await res.json()) as { verses?: VerseRow[]; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "NET");
+      return json.verses ?? [];
+    }
     const { data, error } = await supabase
-      .from("bible_text").select("verse, text")
-      .eq("version", version).eq("book", book).eq("chapter", chapter)
+      .from("bible_text")
+      .select("verse, text")
+      .eq("version", version)
+      .eq("book", book)
+      .eq("chapter", chapter)
       .order("verse", { ascending: true });
     if (error) throw error;
     return (data ?? []).map((row) => ({
@@ -267,14 +274,28 @@ function BibliaClientPage() {
         .range(offset, offset).maybeSingle<{ book: string; chapter: number; verse: number }>();
       if (!base) return;
       setDailyReference(base);
-      const texts = await Promise.all(
-        VERSIONS.map(async (version) => {
-          const { data } = await supabase.from("bible_text").select("text").eq("version", version)
-            .eq("book", base.book).eq("chapter", base.chapter).eq("verse", base.verse)
-            .maybeSingle<{ text: string }>();
-          return { version, text: data?.text ?? "Sin contenido." };
-        }),
-      );
+      const texts: Array<{ version: string; text: string }> = [];
+      for (const version of SEARCHABLE_DB_VERSIONS) {
+        const { data } = await supabase
+          .from("bible_text")
+          .select("text")
+          .eq("version", version)
+          .eq("book", base.book)
+          .eq("chapter", base.chapter)
+          .eq("verse", base.verse)
+          .maybeSingle<{ text: string }>();
+        texts.push({ version, text: data?.text?.trim() || "Sin contenido en esta versión." });
+      }
+      try {
+        const r = await fetch(
+          `/api/bible/chapter?version=NET&book=${encodeURIComponent(base.book)}&chapter=${base.chapter}`,
+        );
+        const j = (await r.json()) as { verses?: VerseRow[] };
+        const hit = j.verses?.find((v) => v.verse === base.verse);
+        if (hit?.text) texts.push({ version: "NET (inglés)", text: hit.text });
+      } catch {
+        /* ignore */
+      }
       setDailyVerses(texts);
     };
     void loadDailyVerse();
@@ -286,7 +307,7 @@ function BibliaClientPage() {
       .eq("version", searchVersion).ilike("text", `%${searchTerm.trim()}%`).limit(40);
     if (error) { setStatus(`Error: ${error.message}`); return; }
     setSearchResults((data ?? []).map((row) => ({
-      version: (row as { version?: BibleVersion }).version ?? "RV1909",
+      version: (row as { version?: DbBibleVersion }).version ?? "RV1909",
       book: String((row as { book?: string }).book ?? ""),
       chapter: Number((row as { chapter?: number }).chapter ?? 0),
       verse: Number((row as { verse?: number }).verse ?? 0),
@@ -294,16 +315,13 @@ function BibliaClientPage() {
     })));
   };
 
-  const shareDaily = (version: BibleVersion, text: string) => {
+  const shareDaily = (version: string, text: string) => {
     if (!dailyReference) return;
     const content = `Versículo del día\n${dailyReference.book} ${dailyReference.chapter}:${dailyReference.verse}\n${version}\n${text}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(content)}`, "_blank", "noopener,noreferrer");
   };
 
-  const chapterOptions = useMemo(
-    () => (chapters.length > 0 ? chapters : Array.from({ length: 150 }, (_, i) => i + 1)),
-    [chapters],
-  );
+  const chapterOptions = useMemo(() => chapterNumbersForBook(book), [book]);
 
   const toggleNarration = () => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) { setStatus("Narración no soportada."); return; }
@@ -311,7 +329,9 @@ function BibliaClientPage() {
     if (primaryVerses.length === 0) { setStatus("No hay versículos cargados."); return; }
     const text = primaryVerses.map((v) => `Versículo ${v.verse}. ${v.text}`).join(" ");
     const u = new SpeechSynthesisUtterance(`${book} capítulo ${chapter}. ${text}`);
-    u.lang = language === "en" ? "en-US" : "es-MX"; u.rate = 0.95;
+    const useEn = language === "en" || isOnlineNetVersion(primaryVersion);
+    u.lang = useEn ? "en-US" : "es-MX";
+    u.rate = 0.95;
     u.onend = () => setIsNarrating(false);
     u.onerror = () => { setIsNarrating(false); setStatus("Error de narración."); };
     window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); setIsNarrating(true);
@@ -355,15 +375,43 @@ function BibliaClientPage() {
           <p className={`mt-1 text-sm ${T.muted}`}>{tx.subtitle}</p>
           <div className="mt-2"><LanguageSwitcher /></div>
 
-          <div className="mt-5 grid grid-cols-1 gap-2 lg:grid-cols-[1fr_130px_150px_auto]">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className={`text-xs font-semibold ${T.muted}`}>
+              {language === "en" ? "Text size" : "Tamaño de letra"}
+            </span>
+            <div className="inline-flex rounded-xl border border-white/15 bg-black/20 p-1">
+              {FONT_STEPS.map((_, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setFontStepPersist(idx)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold ${
+                    fontStep === idx ? T.pillActive : "text-white/50 hover:text-white/80"
+                  }`}
+                >
+                  {idx === 0 ? "A–" : idx === FONT_STEPS.length - 1 ? "A+" : `A${idx}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-2 lg:grid-cols-[1fr_130px_minmax(200px,1fr)_auto]">
             <select value={book} onChange={(e) => setBook(e.target.value)} className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${T.input}`}>
               {SPANISH_BOOKS.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
             <select value={chapter} onChange={(e) => setChapter(Number(e.target.value))} className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${T.input}`}>
               {chapterOptions.map((c) => <option key={c} value={c}>Cap. {c}</option>)}
             </select>
-            <select value={primaryVersion} onChange={(e) => setPrimaryVersion(e.target.value as BibleVersion)} className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${T.input}`}>
-              {VERSIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+            <select
+              value={primaryVersion}
+              onChange={(e) => setPrimaryVersion(e.target.value as BibleVersion)}
+              className={`rounded-xl border px-3 py-2.5 text-sm font-medium ${T.input}`}
+            >
+              {ALL_READER_VERSIONS.map((v) => (
+                <option key={v} value={v}>
+                  {VERSION_LABELS[v]}
+                </option>
+              ))}
             </select>
             <button type="button" onClick={() => void loadChapter()} className={`rounded-xl px-5 py-2.5 text-sm font-bold ${T.accent}`}>
               <Search className="mr-1.5 inline h-4 w-4" />
@@ -379,8 +427,16 @@ function BibliaClientPage() {
               {compareMode ? tx.compareOn : tx.compare}
             </button>
             {compareMode && (
-              <select value={secondaryVersion} onChange={(e) => setSecondaryVersion(e.target.value as BibleVersion)} className={`rounded-xl border px-3 py-2 text-xs font-medium ${T.input}`}>
-                {VERSIONS.filter((v) => v !== primaryVersion).map((v) => <option key={v} value={v}>{v}</option>)}
+              <select
+                value={secondaryVersion}
+                onChange={(e) => setSecondaryVersion(e.target.value as BibleVersion)}
+                className={`rounded-xl border px-3 py-2 text-xs font-medium ${T.input}`}
+              >
+                {ALL_READER_VERSIONS.filter((v) => v !== primaryVersion).map((v) => (
+                  <option key={v} value={v}>
+                    {VERSION_LABELS[v]}
+                  </option>
+                ))}
               </select>
             )}
             <button type="button" onClick={toggleNarration} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${T.narrationBtn}`}>
@@ -398,8 +454,16 @@ function BibliaClientPage() {
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_120px_auto]">
             <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder={tx.searchPlaceholder}
               className={`rounded-xl border px-3 py-2.5 text-sm ${T.input}`} />
-            <select value={searchVersion} onChange={(e) => setSearchVersion(e.target.value as BibleVersion)} className={`rounded-xl border px-3 py-2.5 text-sm ${T.input}`}>
-              {VERSIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+            <select
+              value={searchVersion}
+              onChange={(e) => setSearchVersion(e.target.value as DbBibleVersion)}
+              className={`rounded-xl border px-3 py-2.5 text-sm ${T.input}`}
+            >
+              {SEARCHABLE_DB_VERSIONS.map((v) => (
+                <option key={v} value={v}>
+                  {VERSION_LABELS[v]}
+                </option>
+              ))}
             </select>
             <button type="button" onClick={() => void runSearch()} className={`rounded-xl px-4 py-2.5 text-sm font-bold text-white ${T.searchBtn}`}>{tx.searchBtn}</button>
           </div>
@@ -461,7 +525,11 @@ function BibliaClientPage() {
                 <p className={`mb-3 text-xs font-extrabold uppercase tracking-widest ${T.heading}`}>{primaryVersion}</p>
                 <div className="space-y-3">
                   {primaryVerses.map((item) => (
-                    <p key={`p-${item.verse}`} className="text-sm leading-8 text-white">
+                    <p
+                      key={`p-${item.verse}`}
+                      className="leading-relaxed text-white"
+                      style={{ fontSize: `${fontRem}rem` }}
+                    >
                       <span className={`mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${T.verseBadge}`}>{item.verse}</span>
                       {item.text}
                     </p>
@@ -472,7 +540,11 @@ function BibliaClientPage() {
                 <p className={`mb-3 text-xs font-extrabold uppercase tracking-widest ${T.heading}`}>{secondaryVersion}</p>
                 <div className="space-y-3">
                   {secondaryVerses.map((item) => (
-                    <p key={`s-${item.verse}`} className="text-sm leading-8 text-white">
+                    <p
+                      key={`s-${item.verse}`}
+                      className="leading-relaxed text-white"
+                      style={{ fontSize: `${fontRem}rem` }}
+                    >
                       <span className={`mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${T.verseBadgeCompare}`}>{item.verse}</span>
                       {item.text}
                     </p>
@@ -485,7 +557,11 @@ function BibliaClientPage() {
           ) : (
             <div className="space-y-3">
               {primaryVerses.map((item) => (
-                <p key={`v-${item.verse}`} className="text-[15px] leading-8 text-white">
+                <p
+                  key={`v-${item.verse}`}
+                  className="leading-relaxed text-white"
+                  style={{ fontSize: `${fontRem}rem` }}
+                >
                   <span className={`mr-2 inline-flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-bold ${T.verseBadge}`}>{item.verse}</span>
                   {item.text}
                 </p>
